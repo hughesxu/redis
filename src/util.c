@@ -410,10 +410,15 @@ int string2ll(const char *s, size_t slen, long long *value) {
     /* Convert to negative if needed, and do the final overflow check when
      * converting from unsigned long long to long long. */
     if (negative) {
+        /*
+         * (-(LLONG_MIN+1))+1)) == LLONG_MAX ?? TODO
+         */
         if (v > ((unsigned long long)(-(LLONG_MIN+1))+1)) /* Overflow. */
             return 0;
         if (value != NULL) *value = -v;
     } else {
+        /* value 是有符号数，不能大于LLONG_MAX
+         */
         if (v > LLONG_MAX) /* Overflow. */
             return 0;
         if (value != NULL) *value = v;

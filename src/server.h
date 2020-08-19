@@ -1453,6 +1453,11 @@ typedef struct pubsubPattern {
     robj *pattern;
 } pubsubPattern;
 
+/* 2020-Aug-18: huexu
+ * Is this correct? Pointer to Function?
+ * Seems this is also a way to define A Pointer to Function
+ *     ref: https://stackoverflow.com/questions/44148406/typedef-function-vs-function-pointer
+ */
 typedef void redisCommandProc(client *c);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 struct redisCommand {
