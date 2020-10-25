@@ -53,6 +53,10 @@ list *UsersToLoad;  /* This is a list of users found in the configuration file
 list *ACLLog;       /* Our security log, the user is able to inspect that
                        using the ACL LOG command .*/
 
+/*
+ * ACL: Access Control List
+ * 相当于对command进行的一个分类
+ */
 struct ACLCategoryItem {
     const char *name;
     uint64_t flag;

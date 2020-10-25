@@ -1023,7 +1023,9 @@ void nolocks_localtime(struct tm *tmp, time_t t, time_t tz, int dst);
 
 /* Low level logging. To use only for very big messages, otherwise
  * serverLog() is to prefer. */
+/* serverLog 接收格式化字符串，但是serverLogRaw 只接收待输出字符串作为参数 */
 void serverLogRaw(int level, const char *msg) {
+    // Defined in syslog.h
     const int syslogLevelMap[] = { LOG_DEBUG, LOG_INFO, LOG_NOTICE, LOG_WARNING };
     const char *c = ".-*#";
     FILE *fp;
@@ -1037,6 +1039,7 @@ void serverLogRaw(int level, const char *msg) {
     fp = log_to_stdout ? stdout : fopen(server.logfile,"a");
     if (!fp) return;
 
+    // log without timestamp
     if (rawmode) {
         fprintf(fp,"%s",msg);
     } else {
@@ -1047,6 +1050,10 @@ void serverLogRaw(int level, const char *msg) {
 
         gettimeofday(&tv,NULL);
         struct tm tm;
+        /*
+         * 自定义的localtime函数
+         * 标准的 localtime 在多线程下可能出现死锁的情况
+         */
         nolocks_localtime(&tm,tv.tv_sec,server.timezone,server.daylight_active);
         off = strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
         snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
@@ -1057,6 +1064,10 @@ void serverLogRaw(int level, const char *msg) {
         } else {
             role_char = (server.masterhost ? 'S':'M'); /* Slave or Master. */
         }
+        /*
+         * 依次存放：
+         * pid, X/C/S/M, time, .-*#, msg
+         */
         fprintf(fp,"%d:%c %s %c %s\n",
             (int)getpid(),role_char, buf,c[level],msg);
     }
@@ -1073,6 +1084,9 @@ void serverLog(int level, const char *fmt, ...) {
     va_list ap;
     char msg[LOG_MAX_LEN];
 
+    /*
+     * server.verbosity是在createEnumConfig中设置的，名称为loglevel，对应redis.conf中的loglevel
+     */
     if ((level&0xff) < server.verbosity) return;
 
     va_start(ap, fmt);
@@ -1331,6 +1345,10 @@ dictType keyptrDictType = {
 };
 
 /* Command table. sds string -> command struct pointer. */
+/* 2020-Aug-23: huexu
+ * dictSdsCaseHash 调用dictGenCaseHashFunction，Hash函数是不区分大小写的
+ * 因此命令在命令表中查找也不区分大小写
+ */
 dictType commandTableDictType = {
     dictSdsCaseHash,            /* hash function */
     NULL,                       /* key dup */
@@ -1763,6 +1781,8 @@ void updateCachedTime(int update_daylight_info) {
      * context is safe since we will never fork() while here, in the main
      * thread. The logging function will call a thread safe version of
      * localtime that has no locks. */
+
+    // localtime_r() 是线程安全的
     if (update_daylight_info) {
         struct tm tm;
         time_t ut = server.unixtime;
@@ -2329,11 +2349,16 @@ void createSharedObjects(void) {
 void initServerConfig(void) {
     int j;
 
+    // 更新mstime / ustime / unixtime
     updateCachedTime(1);
+
+    // 通过随机数设置server.runid，每个字符均为十六进制码，以'\0'结尾
     getRandomHexChars(server.runid,CONFIG_RUN_ID_SIZE);
     server.runid[CONFIG_RUN_ID_SIZE] = '\0';
+    // Replication ID 设置 
     changeReplicationId();
     clearReplicationId2();
+    // CONFIG_DEFAULT_HZ = 10
     server.hz = CONFIG_DEFAULT_HZ; /* Initialize it ASAP, even if it may get
                                       updated later after loading the config.
                                       This value may be used before the server
@@ -2351,7 +2376,9 @@ void initServerConfig(void) {
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
     server.saveparams = NULL;
     server.loading = 0;
+    // 新分配空间，将CONFIG_DEFAULT_LOGFILE存放其中
     server.logfile = zstrdup(CONFIG_DEFAULT_LOGFILE);
+    // AOF持久化功能默认OFF
     server.aof_state = AOF_OFF;
     server.aof_rewrite_base_size = 0;
     server.aof_rewrite_scheduled = 0;
@@ -2377,7 +2404,10 @@ void initServerConfig(void) {
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.loading_process_events_interval_bytes = (1024*1024*2);
 
+    // 服务器lruclock设置
     server.lruclock = getLRUClock();
+    // RDB save参数初始化
+    // 并将(3600, 1), (300, 100), (60, 10000)三组参数加入其中
     resetServerSaveParams();
 
     appendServerSaveParams(60*60,1);  /* save after 1 hour and 1 change */
@@ -2407,10 +2437,17 @@ void initServerConfig(void) {
     server.repl_no_slaves_since = time(NULL);
 
     /* Client output buffer limits */
+    /*
+     * 设置三种不同客户端输出缓冲区的硬性限制和软性限制
+     *     - 普通客户端:                0,    0,   0
+     *     - 从服务器客户端:        256MB, 64MB, 60s
+     *     - 发布与订阅功能的客户端: 32MB,  8MB, 60s
+     */
     for (j = 0; j < CLIENT_TYPE_OBUF_COUNT; j++)
         server.client_obuf_limits[j] = clientBufferLimitsDefaults[j];
 
     /* Double constants initialization */
+    // 特殊数字的初始化
     R_Zero = 0.0;
     R_PosInf = 1.0/R_Zero;
     R_NegInf = -1.0/R_Zero;
@@ -2419,9 +2456,16 @@ void initServerConfig(void) {
     /* Command table -- we initiialize it here as it is part of the
      * initial configuration, since command names may be changed via
      * redis.conf using the rename-command directive. */
+    /*
+     * 建立字典，用来存放命令表
+     * 字典的key为命令的名称，value为struct redisCommand
+     */
     server.commands = dictCreate(&commandTableDictType,NULL);
     server.orig_commands = dictCreate(&commandTableDictType,NULL);
     populateCommandTable();
+    /*
+     * 从命令表中搜索相应命令名称对应的struct redisCommand结构，对相应的command赋值
+     */
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -2450,6 +2494,7 @@ void initServerConfig(void) {
      * Redis 5. However it is possible to revert it via redis.conf. */
     server.lua_always_replicate_commands = 1;
 
+    // 初始化redis.conf中的相应value
     initConfigValues();
 }
 
@@ -2967,6 +3012,14 @@ int populateCommandTableParseFlags(struct redisCommand *c, char *strflags) {
     sds *argv;
 
     /* Split the line into arguments for processing. */
+    /*
+     * type of argv: char **
+     * argv是一个数组，数组的每个元素的类型为char *，指向一个字符串
+     * example:     strflags = "write fast @set"
+     *              argv[0] = "write"
+     *              argv[1] = "fast"
+     *              argv[2] = "@set"
+     */
     argv = sdssplitargs(strflags,&argc);
     if (argv == NULL) return C_ERR;
 
@@ -3034,6 +3087,7 @@ void populateCommandTable(void) {
 
         /* Translate the command string flags description into an actual
          * set of flags. */
+        // 从redisCommandTable[]中每个命令的sflags中解析出flags参数
         if (populateCommandTableParseFlags(c,c->sflags) == C_ERR)
             serverPanic("Unsupported command flag");
 
@@ -5037,28 +5091,61 @@ int main(int argc, char **argv) {
 #endif
 
     /* We need to initialize our libraries, and the server configuration. */
+    /* 
+     * config.h --> for linux, INIT_SETPROCTITLE_REPLACEMENT will be set
+     * 看起来是做setproctitle相关的初始化，设置环境表
+     */
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
     spt_init(argc, argv);
 #endif
+    /*
+     * 设置区域信息和时区信息
+     * LC_COLLATE:  配置字符串比较，使用系统环境变量的locale
+     *
+     * tzset()：会使用 TZ 环境变量的当前设置值赋给三个全局变量：
+     *  daylight: 夏令时时区，1/0
+     *  timezone: UTC 和本地时间之前的时差，单位为秒，28800s = 8h
+     *  tzname[0]: TZ 环境变量的时区名称的字符串值
+     *  tzname[1]: 夏令时时区的字符串值
+     */
     setlocale(LC_COLLATE,"");
     tzset(); /* Populates 'timezone' global. */
     zmalloc_set_oom_handler(redisOutOfMemoryHandler);
+    // Initialize random number generator
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
     crc64_init();
 
+    /*
+     * 生成Hash函数的种子，并用此初始化Hash函数
+     */
     uint8_t hashseed[16];
     getRandomBytes(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
+    /*
+     * Set to 1 if "redis-sentinel" or "--sentinel" is specified.
+     */
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    /*
+     * (1) 初始化redisServer结构体中的各项成员
+     * (2) 初始化redis.config中各项配置项，包括默认值和进行操作（set/get）的回调函数
+     * (3) 绑定Redis命令及其对应的回调函数populateCommandTable()
+     */
     initServerConfig();
+    /*
+     * Access Control List初始化，Radix Tree初始化
+     * TODO
+     */
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
+    // Redis Module Init, TODO
     moduleInitModulesSystem();
+    // TLS: Transport Layer Security, TODO
     tlsInit();
 
     /* Store the executable path and arguments in a safe place in order
      * to be able to restart the server later. */
+    // 初始化executable和exec_argv参数，多分配一个空间用于存放NULL
     server.executable = getAbsolutePath(argv[0]);
     server.exec_argv = zmalloc(sizeof(char*)*(argc+1));
     server.exec_argv[argc] = NULL;
@@ -5067,6 +5154,7 @@ int main(int argc, char **argv) {
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor. */
+    // TODO
     if (server.sentinel_mode) {
         initSentinelConfig();
         initSentinel();
@@ -5075,6 +5163,9 @@ int main(int argc, char **argv) {
     /* Check if we need to start in redis-check-rdb/aof mode. We just execute
      * the program main. However the program is part of the Redis executable
      * so that we can easily execute an RDB check on loading errors. */
+    /*
+     * 单独对命令redis-check-rdb/redis-check-aof 进行处理
+     */
     if (strstr(argv[0],"redis-check-rdb") != NULL)
         redis_check_rdb_main(argc,argv,NULL);
     else if (strstr(argv[0],"redis-check-aof") != NULL)
@@ -5102,6 +5193,7 @@ int main(int argc, char **argv) {
         }
 
         /* First argument is the config file name? */
+        // redis.config file设置，用来解析并设置
         if (argv[j][0] != '-' || argv[j][1] != '-') {
             configfile = argv[j];
             server.configfile = getAbsolutePath(configfile);
@@ -5116,6 +5208,10 @@ int main(int argc, char **argv) {
          * configuration file. For instance --port 6380 will generate the
          * string "port 6380\n" to be parsed after the actual file name
          * is parsed, if any. */
+        /* 
+         * 将类似"--port 777"的参数放入 sds options 中，以空格间隔开。不同的参数设置之间用'\n'隔开
+         * 从这里的处理可以看出：如果要指定config file，需要在options参数之前指定
+         */
         while(j != argc) {
             if (argv[j][0] == '-' && argv[j][1] == '-') {
                 /* Option name */
@@ -5141,6 +5237,10 @@ int main(int argc, char **argv) {
                 "Sentinel needs config file on disk to save state.  Exiting...");
             exit(1);
         }
+        /*
+         * 此处会将RDB持久化的save参数清空
+         * 然后将config_file和options中的参数设置进去，先config_file，后options。因此options会覆盖config file的值
+         */
         resetServerSaveParams();
         loadServerConfig(configfile,options);
         sdsfree(options);
@@ -5161,6 +5261,7 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING, "Configuration loaded");
     }
 
+    // TODO
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
     if (background) daemonize();

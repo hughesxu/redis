@@ -398,11 +398,11 @@ unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, uns
  *      对于整数编码，encoding存储的是第一个字节；
  *      对于字节数组编码，encoding存储的是头部2 bits
  */
-#define ZIP_DECODE_LENGTH(ptr, encoding, lensize, len) do {                    \
-    ZIP_ENTRY_ENCODING((ptr), (encoding));                                     \
     /*
      * 此处类似ZIP_IS_STR()
      */
+#define ZIP_DECODE_LENGTH(ptr, encoding, lensize, len) do {                    \
+    ZIP_ENTRY_ENCODING((ptr), (encoding));                                     \
     if ((encoding) < ZIP_STR_MASK) {                                           \
         if ((encoding) == ZIP_STR_06B) {                                       \
             (lensize) = 1;                                                     \

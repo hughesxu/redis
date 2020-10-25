@@ -87,11 +87,13 @@ static int spt_clearenv(void) {
 	return 0;
 #else
 	extern char **environ;
+    // 指向指针数组的指针，实际上是其起始地址
 	static char **tmp;
 
 	if (!(tmp = malloc(sizeof *tmp)))
 		return errno;
 
+    // 指针数组只有一个元素，其地址为空，用此空指针将环境表给清空了。
 	tmp[0]  = NULL;
 	environ = tmp;
 
@@ -100,6 +102,11 @@ static int spt_clearenv(void) {
 } /* spt_clearenv() */
 
 
+/* 2020-Aug-19: huexu
+ *  将程序环境表environ 清空，此时environ 指向一个全新的地址。
+ *  然后再根据oldenv = envp = environ的值进行setenv，此时environ已经不再指向有效环境表
+ *  这个难道不是和原本的environ一样吗？
+ */
 static int spt_copyenv(char *oldenv[]) {
 	extern char **environ;
 	char *eq;
@@ -150,6 +157,7 @@ static int spt_copyargs(int argc, char *argv[]) {
 
 
 void spt_init(int argc, char *argv[]) {
+    /* environ: 全局变量，字符指针数组，程序环境表 */
         char **envp = environ;
 	char *base, *end, *nul, *tmp;
 	int i, error;
@@ -161,6 +169,9 @@ void spt_init(int argc, char *argv[]) {
 	end = nul + 1;
 
 	for (i = 0; i < argc || (i >= argc && argv[i]); i++) {
+        /* argv[i] < end 是为了跳过argv[0] ?
+         * end 获得最后一个命令行参数末尾nul的下一个位置
+         */
 		if (!argv[i] || argv[i] < end)
 			continue;
 
@@ -174,6 +185,7 @@ void spt_init(int argc, char *argv[]) {
 		end = envp[i] + strlen(envp[i]) + 1;
 	}
 
+    // 初始化结构体SPT.arg0 指向命令行参数的首地址，实际上是重新malloc，再将原内容copy到分配的内存中。
 	if (!(SPT.arg0 = strdup(argv[0])))
 		goto syerr;
 
@@ -194,13 +206,17 @@ void spt_init(int argc, char *argv[]) {
 	setprogname(tmp);
 #endif
 
-
+    // 此处已清空environ
 	if ((error = spt_copyenv(envp)))
 		goto error;
 
+    // 将每个命令行参数都重新分配+拷贝一遍，放在argv 中
 	if ((error = spt_copyargs(argc, argv)))
 		goto error;
 
+    // nul : 指向base 命令行参数的nul
+    // base : 指向base 命令行参数
+    // end: 指向命令行参数末尾nul 的下一个地址，考虑到了环境表
 	SPT.nul  = nul;
 	SPT.base = base;
 	SPT.end  = end;

@@ -280,6 +280,9 @@ void queueLoadModule(sds path, sds *argv, int argc) {
     listAddNodeTail(server.loadmodule_queue,loadmod);
 }
 
+/* 2020-Aug-23: huexu
+ * 调用了每一项config的init回调函数，完成对config->data的初始化
+ */
 void initConfigValues() {
     for (standardConfig *config = configs; config->name != NULL; config++) {
         config->interface.init(config->data);
@@ -2089,6 +2092,10 @@ static int updateTlsCfgInt(long long val, long long prev, char **err) {
 }
 #endif  /* USE_OPENSSL */
 
+/*
+ * 创建configs 数组，保存所有的standardConfig项
+ * typeInterface保存了对每种config对应数据类型操作的回调函数：init/load/set/get/rewrite
+ */
 standardConfig configs[] = {
     /* Bool configs */
     createBoolConfig("rdbchecksum", NULL, IMMUTABLE_CONFIG, server.rdb_checksum, 1, NULL, NULL),
